@@ -1,0 +1,32 @@
+@startuml 01-medallion-architecture
+!include lib/tala.puml
+
+left to right direction
+skinparam nodesep 18
+skinparam ranksep 34
+
+package "1. Move 1 · Raw CSV -> Bronze Delta\n(Permissive Landing)" as m1 {
+  component "<b>Daily Order Drops + Catalog</b>\norders_2024-01-01.csv (12 rows)\norders_2024-01-02.csv (12 rows)\nproducts.csv (10 SKUs)" as raw <<legacy>>
+  component "<b>bronze/orders & bronze/products</b>\nPERMISSIVE + _corrupt_record\ndrop_date dynamic partitions\n24 raw orders + 10 products" as brz <<live>>
+}
+
+package "2. Move 2 · Bronze -> Silver Delta\n(Functional Clean + Parquet Steps)" as m2 {
+  component "<b>Step 1-2 Parquet Checkpoints</b>\n01_orders_parsed_fields.parquet\n02_orders_row_traps.parquet\nUTC dates · [$,] strip · EXTRA_FLAG rescue" as p12 <<live>>
+  component "<b>Step 3 Window CDC + Superseded</b>\n03_orders_reconciled.parquet (22)\n03_orders_cdc_superseded.parquet (2)\nO1002 dedup · O1003 qty 5->6" as p3 <<warning>>
+  component "<b>silver/orders & silver/products</b>\nDelta MERGE (src.drop_date >= tgt)\n22 canonical orders · 10 clean SKUs\n0 loops · 0 UDFs" as slv <<verified>>
+}
+
+package "3. Move 3 · Silver -> Gold Delta\n(Catalog Join & Aggregations)" as m3 {
+  component "<b>04_joined_order_facts.parquet</b>\nLEFT JOIN silver/products\nCOALESCE(unit_price, list_price)\nCOALESCE(category, 'Unknown')" as fct <<live>>
+  component "<b>gold/daily_sales (Delta + CSV)</b>\n17 (date, category, region) cells\nDynamic order_date overwrite\nReturn-safe NULLIF AOV guard" as gld <<verified>>
+  component "<b>gold/trap_forensics (Delta + CSV)</b>\n14 / 14 forensic traps audited\n100% Spark explode + groupBy" as aud <<verified>>
+}
+
+raw --> p12
+brz --> p3
+brz --> slv
+p12 --> fct
+p3 --> gld
+slv --> aud
+
+@enduml

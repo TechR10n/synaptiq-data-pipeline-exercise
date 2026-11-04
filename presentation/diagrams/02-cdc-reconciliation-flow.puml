@@ -1,0 +1,33 @@
+@startuml 02-cdc-reconciliation-flow
+!include lib/tala.puml
+
+left to right direction
+skinparam nodesep 16
+skinparam ranksep 30
+
+package "Day 1 Drop (2024-01-01)" as d1 {
+  component "<b>O1002 (2024-01-01)</b>\nP010 · qty=1 · $1,099.00 · West" as d1_1002 <<legacy>>
+  component "<b>O1003 (2024-01-01)</b>\nP003 · qty=5 · $3.50 · North\nDay-1 Gold Stationery/North = $17.50" as d1_1003 <<warning>>
+  component "<b>O1008 (2024-01-01)</b>\nP008 · qty=0 · $9.99 · North\nTagged ZERO_QUANTITY (excluded in Gold)" as d1_1008 <<incident>>
+}
+
+package "Day 2 Drop (2024-01-02)" as d2 {
+  component "<b>O1002 Replay</b>\nIdentical payload in 01-02 file\nTRAP_10_EXACT_CROSS_FILE_DUPLICATE" as d2_1002 <<incident>>
+  component "<b>O1003 Late Restatement</b>\norder_date=2024-01-01 · qty 5 -> 6\nTRAP_11_LATE_ARRIVING_RESTATEMENT" as d2_1003 <<incident>>
+  component "<b>O2004 Solo Return + O2009 Truncated</b>\nO2004: qty=-1 (-$1,099, AOV=NULL)\nO2009: P004 list_price=$29.99 imputed" as d2_new <<warning>>
+}
+
+package "Reconciled Silver & Gold State" as out {
+  component "<b>Silver Delta MERGE</b>\nWindow(order_id, drop_date DESC)\nsrc.drop_date >= tgt.drop_date\nOut-of-order replay safe" as mrg <<live>>
+  component "<b>Impacted order_date Refresh</b>\nleft_semi join refreshes BOTH\n2024-01-01 ($17.50 -> $21.00) &\n2024-01-02 without double-counting O1002" as res <<verified>>
+}
+
+d1_1002 --> mrg
+d2_1002 --> mrg
+d1_1003 --> mrg
+d2_1003 --> mrg
+d1_1008 --> mrg
+d2_new --> mrg
+mrg --> res
+
+@enduml

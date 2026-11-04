@@ -1,0 +1,41 @@
+@startuml 03-hybrid-deployment-component
+allowmixing
+!include lib/tala.puml
+
+left to right direction
+skinparam nodesep 18
+skinparam ranksep 34
+
+node "1. Source Drop Zone\n(Filesystem / UC Volume)" as src_zone <<execution-environment>> {
+  artifact "<b>orders_2024-01-01.csv</b>\n12 rows · EXTRA_FLAG · $24.99" as f_d1 <<legacy>>
+  artifact "<b>orders_2024-01-02.csv</b>\n12 rows · O1003 restatement · epoch" as f_d2 <<legacy>>
+  artifact "<b>products.csv</b>\n10 SKUs · list_price · case drift" as f_pr <<legacy>>
+}
+
+node "2. Local Runtime Host (uv 0.13 · macOS arm64)" as host <<execution-environment>> {
+  node "CPython 3.12.12 (.venv)" as py_env {
+    component "<b>pytest-cov + ruff + pydocstyle</b>\n99.64% Coverage (279 / 280 stmts)\nPEP-257 · Static AST Loop/UDF Gate" as cmp_qa <<verified>>
+    component "<b>cli.py & pipeline.py</b>\nMove 1 -> Move 2 -> Move 3\nFunctional Orchestrator" as cmp_orch <<live>>
+    component "<b>bronze.py · silver.py · gold.py</b>\nDataFrame.transform() + F.filter()\n0 Loops · 0 UDFs" as cmp_fn <<verified>>
+  }
+
+  node "OpenJDK 21.0.13 JVM (Py4J Bridge)" as jvm_env {
+    component "<b>Apache Spark 4.2.0 (local[*])</b>\nCatalyst Lazy Planner · WholeStageCodegen\nUTC Timezone · ANSI SQL Mode" as cmp_spk <<live>>
+    component "<b>Delta Lake 4.4.1 Kernel</b>\nACID DeltaTable.merge()\nDynamic Partition Overwrite" as cmp_dlt <<live>>
+  }
+}
+
+node "3. Persisted Lakehouse Storage" as store <<execution-environment>> {
+  database "<b>Bronze & Silver Delta</b>\nwarehouse/bronze/{orders,products}\nwarehouse/silver/{orders,products}" as db_bs <<live>>
+  folder "<b>Parquet Enrichment Steps</b>\nwarehouse/intermediate/\n01..04_*.parquet (6 steps)" as fld_pq <<warning>>
+  database "<b>Gold Delta + CSV Exports</b>\ngold/{daily_sales,trap_forensics}\noutput/*.csv (17 sales · 14 traps)" as db_gld <<verified>>
+}
+
+f_d1 --> cmp_orch
+f_d2 --> cmp_fn
+f_pr --> cmp_fn
+cmp_fn --> db_bs
+cmp_spk --> fld_pq
+cmp_dlt --> db_gld
+
+@enduml
